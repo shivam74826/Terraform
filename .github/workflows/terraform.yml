@@ -1,0 +1,94 @@
+name: Terraform CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths: ["environments/**", "modules/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  TF_VERSION: "1.6.6"
+  AWS_DEFAULT_REGION: "ap-south-1"
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: environments/dev
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: environments/dev
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: environments/dev
+        run: terraform plan -var-file="terraform.tfvars" -out=tfplan
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const output = `#### Terraform Plan 📖
+            **Workflow:** ${{ github.workflow }}
+            **Event:** ${{ github.event_name }}
+            Run \`terraform apply\` after merging to main.`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Terraform Init
+        working-directory: environments/dev
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: environments/dev
+        run: terraform apply -var-file="terraform.tfvars" -auto-approve
